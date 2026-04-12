@@ -1,3 +1,10 @@
+[![CI](https://img.shields.io/github/actions/workflow/status/Tox1469/ai-prompt-guard/ci.yml?style=flat-square&label=ci)](https://github.com/Tox1469/ai-prompt-guard/actions)
+[![License](https://img.shields.io/github/license/Tox1469/ai-prompt-guard?style=flat-square)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Tox1469/ai-prompt-guard?style=flat-square)](https://github.com/Tox1469/ai-prompt-guard/releases)
+[![Stars](https://img.shields.io/github/stars/Tox1469/ai-prompt-guard?style=flat-square)](https://github.com/Tox1469/ai-prompt-guard/stargazers)
+
+---
+
 # ai-prompt-guard
 
 Proteção contra prompt injection para aplicações com IA. Detecta tentativas de manipulação, registra strikes, e bloqueia usuários reincidentes.

@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  verify:
+    name: Verify repo integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check required files
+        run: |
+          test -f README.md && echo "README.md ok"
+          test -f LICENSE && echo "LICENSE ok"
+          test -d src && echo "src/ ok"
+
+      - name: Check TypeScript files exist
+        run: |
+          count=$(find src -name "*.ts" | wc -l)
+          echo "TypeScript files: $count"
+          test $count -gt 0
