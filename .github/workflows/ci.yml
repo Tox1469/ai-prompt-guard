@@ -2,26 +2,22 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
-    branches: [master, main]
 
 jobs:
-  verify:
-    name: Verify repo integrity
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check required files
-        run: |
-          test -f README.md && echo "README.md ok"
-          test -f LICENSE && echo "LICENSE ok"
-          test -d src && echo "src/ ok"
-
-      - name: Check TypeScript files exist
-        run: |
-          count=$(find src -name "*.ts" | wc -l)
-          echo "TypeScript files: $count"
-          test $count -gt 0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
