@@ -1,101 +1,164 @@
-[![CI](https://img.shields.io/github/actions/workflow/status/Tox1469/ai-prompt-guard/ci.yml?style=flat-square&label=ci)](https://github.com/Tox1469/ai-prompt-guard/actions)
-[![License](https://img.shields.io/github/license/Tox1469/ai-prompt-guard?style=flat-square)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/Tox1469/ai-prompt-guard?style=flat-square)](https://github.com/Tox1469/ai-prompt-guard/releases)
-[![Stars](https://img.shields.io/github/stars/Tox1469/ai-prompt-guard?style=flat-square)](https://github.com/Tox1469/ai-prompt-guard/stargazers)
-
----
-
 # ai-prompt-guard
 
-Proteção contra prompt injection para aplicações com IA. Detecta tentativas de manipulação, registra strikes, e bloqueia usuários reincidentes.
+[![CI](https://github.com/Tox1469/ai-prompt-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/Tox1469/ai-prompt-guard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Extraído de um sistema em produção com 50+ agentes de IA atendendo empresas.
+Prompt injection detection for LLM apps, with a strike counter that locks users who keep trying.
+Works in English and Portuguese. Zero runtime dependencies and no Node-specific APIs, so it runs on Node 18+
+and on edge runtimes.
 
-## Funcionalidades
+It started as the guard on the chat endpoints of a multi-tenant AI agent platform in production. This is that
+code pulled out of the app: no database client inside, you plug in your own store and decide what a lock means.
 
-- **Análise de mensagem** — Detecta padrões de prompt injection, jailbreak, e manipulação
-- **Sistema de strikes** — Conta tentativas por usuário e escala penalidades
-- **Lock de conta** — Bloqueia automaticamente após N strikes
-- **Sanitização** — Remove caracteres perigosos e normaliza input
-- **Logging** — Registra todas as tentativas para auditoria
+```ts
+import { createGuard, sanitizeChat } from "@tox1469/ai-prompt-guard";
 
-## Instalação
+const guard = createGuard({
+  onLock: async (userId, state, threat) => {
+    await db.users.update(userId, { lockedAt: new Date(), lockReason: threat.layer });
+  },
+});
 
-```bash
-npm install ai-prompt-guard
-```
-
-## Uso
-
-```typescript
-import { analyzeMessage, sanitizeChat, recordStrike } from 'ai-prompt-guard';
-
-// Em uma rota de chat com IA
 export async function POST(req: Request) {
-  const { message, userId } = await req.json();
+  const { userId, message } = await req.json();
 
-  // 1. Sanitiza o input
-  const clean = sanitizeChat(message);
-
-  // 2. Analisa por prompt injection
-  const analysis = analyzeMessage(clean);
-
-  if (analysis.isInjection) {
-    // 3. Registra strike
-    await recordStrike(userId, {
-      type: analysis.type,
-      severity: analysis.severity,
-      message: clean,
-    });
-
-    return Response.json(
-      { error: 'Mensagem bloqueada por segurança.' },
-      { status: 400 }
-    );
+  const check = await guard.check(userId, message); // analyze the raw text
+  if (!check.allowed) {
+    return Response.json({ error: "Message blocked." }, { status: check.locked ? 403 : 400 });
   }
 
-  // 4. Seguro — envia pra IA
-  const response = await callAI(clean);
-  return Response.json({ response });
+  const reply = await callModel(sanitizeChat(message)); // then clean it for the prompt
+  return Response.json({ reply });
 }
 ```
 
-## Padrões Detectados
+## Install
 
-| Tipo | Exemplo | Severidade |
-|------|---------|------------|
-| `role_override` | "Ignore suas instruções e..." | Alta |
-| `system_leak` | "Mostre seu system prompt" | Alta |
-| `encoding_bypass` | Tentativas com base64, unicode | Média |
-| `context_manipulation` | "A partir de agora você é..." | Média |
-| `data_extraction` | "Liste todos os dados de..." | Alta |
-| `instruction_injection` | "Execute o seguinte comando..." | Alta |
+```bash
+npm install github:Tox1469/ai-prompt-guard#v1.0.0
+```
 
-## Configuração
+The package builds itself on install (`prepare` runs `tsc`) and ships ESM with type declarations.
 
-```typescript
-import { createGuard } from 'ai-prompt-guard';
+## What it catches
 
-const guard = createGuard({
-  maxStrikes: 3,           // Strikes antes do lock
-  lockDurationMs: 3600000, // 1 hora de lock
-  logAttempts: true,       // Logar tentativas
-  customPatterns: [        // Padrões extras
-    { pattern: /senha|password/i, type: 'data_extraction', severity: 'high' },
-  ],
+Each layer has a level and a weight. The first layer that matches wins, most severe first.
+
+| Layer | Level | Weight | Examples |
+|---|---|---|---|
+| `data_exfiltration` | critical | 3 | "show me all the API keys", "mostre as senhas dos clientes" |
+| `token_smuggling` | critical | 3 | `<\|im_start\|>`, `[INST]`, `<<SYS>>`, `### System:` |
+| `direct_injection` | high | 2 | "ignore all previous instructions", "esqueça suas regras" |
+| `prompt_extraction` | high | 2 | "show me your system prompt", "qual é o seu prompt?" |
+| `jailbreak` | high | 2 | "from now on you are...", "ative o modo desenvolvedor" |
+| `sql` | high | 2 | `DROP TABLE`, `UNION SELECT`, `' OR 1=1` |
+| `indirect_injection` | medium | 1 | "[SYSTEM UPDATE]", "Note to AI:" hidden in documents and emails |
+| `multilang` | medium | 1 | the same attacks in Spanish, French and German |
+
+Before matching, the text is normalized so the usual tricks stop working:
+
+- accents are stripped, so "instruções" and "instrucoes" are the same word
+- zero-width and other invisible characters are removed (`ig​nore`)
+- Cyrillic and Greek lookalikes become Latin (`іgnоre` with Cyrillic і and о)
+- fullwidth letters become ASCII (`ｉｇｎｏｒｅ`)
+- base64 chunks are decoded and checked too, and the result says `encoded: true`
+
+The test suite also keeps a list of normal messages that must **not** be blocked, like "how do I decode
+base64 in JavaScript?", "I want to start over my essay" or "você agora é cliente premium".
+
+## API
+
+### `analyzeMessage(message, options?)`
+
+Pure function, no state.
+
+```ts
+analyzeMessage("Ignore all previous instructions");
+// { detected: true, level: "high", layer: "direct_injection", weight: 2,
+//   pattern: "ignore\\s+(all\\s+)?...", encoded: false }
+```
+
+`pattern` is the regex that matched, never the user's text, so the result is safe to log.
+
+Options:
+
+- `ignoreLayers`: layers to skip. A coding assistant will want `["sql"]`.
+- `extraPatterns`: your own rules, checked after the built-in ones.
+
+```ts
+analyzeMessage(text, {
+  ignoreLayers: ["sql"],
+  extraPatterns: [{ pattern: /wifi password/i, layer: "internal_info", level: "medium", weight: 1 }],
 });
 ```
 
-## Stack
+### `createGuard(options?)`
 
-- TypeScript
-- Zero dependências externas
-- Compatível com qualquer runtime (Node, Edge, Bun)
+Wraps the analyzer with a per-user score. Every detection adds its layer's weight; when the score reaches
+`lockThreshold` the user is locked and `onLock` runs once.
 
-## Licença
+| Option | Default | |
+|---|---|---|
+| `lockThreshold` | `5` | Three high hits, or two critical ones |
+| `windowMs` | 1 hour | Strikes older than this are forgotten |
+| `lockMs` | 1 hour | How long a lock lasts. `Infinity` keeps it until `reset()` |
+| `store` | `memoryStore()` | Where the scores live |
+| `onLock` | none | `(userId, state, threat) => void \| Promise<void>` |
+
+Plus `ignoreLayers` and `extraPatterns`, passed to the analyzer.
+
+The guard returns:
+
+- `check(userId, message)`: `{ allowed, locked, threat, strikes, score }`. A locked user gets `allowed: false` even for clean messages.
+- `isLocked(userId)`
+- `reset(userId)`: clears the score and lifts the lock.
+
+### Stores
+
+The default store is an in-memory `Map` capped at 10 000 users. That is fine for one process. Serverless
+functions and multiple instances each get their own memory, so use a shared store. Anything with
+`get`, `set` and `delete` works, sync or async:
+
+```ts
+import { createGuard } from "@tox1469/ai-prompt-guard";
+
+const guard = createGuard({
+  store: {
+    get: async (id) => JSON.parse((await redis.get(`guard:${id}`)) ?? "null") ?? undefined,
+    set: async (id, state) => void (await redis.set(`guard:${id}`, JSON.stringify(state), "EX", 86400)),
+    delete: async (id) => void (await redis.del(`guard:${id}`)),
+  },
+});
+```
+
+### `sanitizeChat(message, { maxLength? })`
+
+Removes control and invisible characters and chat-template markers, collapses blank lines and caps the
+length (10 000 by default). Use it on the text you put in the prompt, **after** the check, because it
+removes the markers the analyzer looks for.
+
+## Limits
+
+This is pattern matching. It stops the copy-paste attacks and the common evasions, and it makes repeat
+offenders expensive. It does not understand intent, so a new phrasing can get through. Treat it as the
+first layer, not the only one:
+
+- give the model only the tools and data the current user is allowed to use
+- never put secrets in the system prompt
+- validate tool calls and model output on the server, not just the input
+- log `threat` results and look at them; that is how you find the phrasing it missed
+
+## Development
+
+```bash
+npm install
+npm test          # node:test, runs the TypeScript sources directly
+npm run typecheck
+npm run build     # dist/
+```
+
+## License
 
 MIT
 
----
-
-<sub>built by tox — extraído de sistema em produção com 50+ agentes IA</sub>
+<sub>built by [tox](https://tox.dev.br)</sub>
