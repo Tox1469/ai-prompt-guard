@@ -1,0 +1,45 @@
+{
+  "name": "@tox1469/ai-prompt-guard",
+  "version": "1.0.0",
+  "description": "Layered prompt injection detection and weighted strike locking for LLM apps. Zero runtime dependencies.",
+  "license": "MIT",
+  "author": "Tox (https://tox.dev.br)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tox1469/ai-prompt-guard.git"
+  },
+  "keywords": [
+    "prompt-injection",
+    "llm",
+    "ai",
+    "security",
+    "jailbreak",
+    "guardrails"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "prepare": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "^7.0.2"
+  }
+}
