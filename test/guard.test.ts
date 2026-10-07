@@ -103,6 +103,26 @@ test("memoryStore drops the oldest user when full", () => {
   assert.ok(store.get("b") && store.get("c"));
 });
 
+test("memoryStore evicts unlocked users before locked ones", () => {
+  const store = memoryStore(2);
+  const locked: StrikeState = { strikes: 3, score: 6, firstAt: 0, lockedUntil: Infinity };
+  const open: StrikeState = { strikes: 1, score: 2, firstAt: 0, lockedUntil: null };
+  store.set("attacker", locked);
+  store.set("flood-1", open);
+  store.set("flood-2", open);
+  assert.ok(store.get("attacker"), "a flood of new ids must not unlock someone");
+  assert.equal(store.get("flood-1"), undefined);
+});
+
+test("concurrent attacks from one user all count and lock only once", async () => {
+  let locks = 0;
+  const guard = createGuard({ onLock: () => void locks++ });
+  const results = await Promise.all([1, 2, 3].map(() => guard.check("u1", ATTACK)));
+  assert.deepEqual(results.map((r) => r.score).sort(), [2, 4, 6]);
+  assert.equal(locks, 1);
+  assert.equal(await guard.isLocked("u1"), true);
+});
+
 test("guard options reach the analyzer", async () => {
   const guard = createGuard({ ignoreLayers: ["sql"] });
   assert.equal((await guard.check("u1", "DROP TABLE users")).allowed, true);

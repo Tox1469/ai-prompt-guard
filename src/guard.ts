@@ -39,7 +39,10 @@ export interface CheckResult {
   score: number;
 }
 
-/** In-memory store. Keeps at most `maxEntries` users and drops the oldest first. */
+/**
+ * In-memory store. Keeps at most `maxEntries` users. When full it drops the oldest user
+ * that is not locked, so flooding it with new ids does not lift anyone's lock.
+ */
 export function memoryStore(maxEntries = 10_000): StrikeStore {
   const map = new Map<string, StrikeState>();
   return {
@@ -47,7 +50,11 @@ export function memoryStore(maxEntries = 10_000): StrikeStore {
     set: (key, state) => {
       map.delete(key);
       map.set(key, state);
-      if (map.size > maxEntries) map.delete(map.keys().next().value!);
+      if (map.size <= maxEntries) return;
+      for (const [k, s] of map) {
+        if (s.lockedUntil === null) return void map.delete(k);
+      }
+      map.delete(map.keys().next().value!);
     },
     delete: (key) => void map.delete(key),
   };
@@ -63,6 +70,20 @@ export function createGuard(options: GuardOptions = {}) {
     now = Date.now,
   } = options;
 
+  // Checks for the same user run one after the other. Otherwise a burst of parallel
+  // requests reads the same old score and the lock comes late (or twice).
+  // This covers one process; across instances the store itself has to be atomic.
+  const queues = new Map<string, Promise<unknown>>();
+  function serialize<T>(userId: string, task: () => Promise<T>): Promise<T> {
+    const run = (queues.get(userId) ?? Promise.resolve()).then(task, task);
+    const tail = run.catch(() => {});
+    queues.set(userId, tail);
+    void tail.then(() => {
+      if (queues.get(userId) === tail) queues.delete(userId);
+    });
+    return run;
+  }
+
   async function current(userId: string): Promise<StrikeState | undefined> {
     const state = await store.get(userId);
     if (!state) return undefined;
@@ -76,28 +97,32 @@ export function createGuard(options: GuardOptions = {}) {
     return state;
   }
 
+  async function checkNow(userId: string, message: string): Promise<CheckResult> {
+    const threat = analyzeMessage(message, options);
+    let state = await current(userId);
+
+    if (state?.lockedUntil != null) {
+      return { allowed: false, locked: true, threat, strikes: state.strikes, score: state.score };
+    }
+    if (!threat.detected) {
+      return { allowed: true, locked: false, threat, strikes: state?.strikes ?? 0, score: state?.score ?? 0 };
+    }
+
+    const t = now();
+    state = state ?? { strikes: 0, score: 0, firstAt: t, lockedUntil: null };
+    state = { ...state, strikes: state.strikes + 1, score: state.score + threat.weight };
+    const locks = state.score >= lockThreshold;
+    if (locks) state.lockedUntil = t + lockMs;
+    await store.set(userId, state);
+    if (locks) await onLock?.(userId, state, threat);
+
+    return { allowed: false, locked: locks, threat, strikes: state.strikes, score: state.score };
+  }
+
   return {
     /** Analyze a message from `userId`, count a strike if it is an attack, and tell you whether to let it through. */
-    async check(userId: string, message: string): Promise<CheckResult> {
-      const threat = analyzeMessage(message, options);
-      let state = await current(userId);
-
-      if (state?.lockedUntil != null) {
-        return { allowed: false, locked: true, threat, strikes: state.strikes, score: state.score };
-      }
-      if (!threat.detected) {
-        return { allowed: true, locked: false, threat, strikes: state?.strikes ?? 0, score: state?.score ?? 0 };
-      }
-
-      const t = now();
-      state = state ?? { strikes: 0, score: 0, firstAt: t, lockedUntil: null };
-      state = { ...state, strikes: state.strikes + 1, score: state.score + threat.weight };
-      const locks = state.score >= lockThreshold;
-      if (locks) state.lockedUntil = t + lockMs;
-      await store.set(userId, state);
-      if (locks) await onLock?.(userId, state, threat);
-
-      return { allowed: false, locked: locks, threat, strikes: state.strikes, score: state.score };
+    check(userId: string, message: string): Promise<CheckResult> {
+      return serialize(userId, () => checkNow(userId, message));
     },
 
     async isLocked(userId: string): Promise<boolean> {

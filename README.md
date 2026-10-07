@@ -35,7 +35,7 @@ export async function POST(req: Request) {
 ## Install
 
 ```bash
-npm install github:Tox1469/ai-prompt-guard#v2.0.0
+npm install github:Tox1469/ai-prompt-guard#v2.0.1
 ```
 
 The package builds itself on install (`prepare` runs `tsc`) and ships ESM with type declarations.
@@ -115,7 +115,8 @@ The guard returns:
 
 ### Stores
 
-The default store is an in-memory `Map` capped at 10 000 users. That is fine for one process. Serverless
+The default store is an in-memory `Map` capped at 10 000 users. When it is full it drops the oldest user
+that is not locked, so a flood of new ids cannot lift a lock. That is fine for one process. Serverless
 functions and multiple instances each get their own memory, so use a shared store. Anything with
 `get`, `set` and `delete` works, sync or async:
 
@@ -130,6 +131,10 @@ const guard = createGuard({
   },
 });
 ```
+
+Checks for the same user run in order inside one process, so a burst of parallel requests is counted in
+full and `onLock` fires once. Across instances that guarantee has to come from the store (a Redis `WATCH`
+or a row lock). For a lock that must stick no matter what, persist it in `onLock`, as in the example at the top.
 
 ### `sanitizeChat(message, { maxLength? })`
 
