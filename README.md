@@ -35,7 +35,7 @@ export async function POST(req: Request) {
 ## Install
 
 ```bash
-npm install github:Tox1469/ai-prompt-guard#v1.0.0
+npm install github:Tox1469/ai-prompt-guard#v2.0.0
 ```
 
 The package builds itself on install (`prepare` runs `tsc`) and ships ESM with type declarations.

@@ -1,6 +1,6 @@
 {
   "name": "@tox1469/ai-prompt-guard",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Layered prompt injection detection and weighted strike locking for LLM apps. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Tox (https://tox.dev.br)",
